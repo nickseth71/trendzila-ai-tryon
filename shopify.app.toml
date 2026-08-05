@@ -18,8 +18,3 @@ scopes = "read_products,write_products,write_files"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
-
- [app_proxy]
-   url = "https://your-tunnel-url.trycloudflare.com"
-   prefix = "apps"
-   subpath = "tryon"
