@@ -84,6 +84,7 @@ async function ensureMetafieldDefinitions(admin) {
             key: field.key,
             type: "file_reference",
             ownerType: "PRODUCT",
+            access: { storefront: "PUBLIC_READ" },
           },
         },
       },

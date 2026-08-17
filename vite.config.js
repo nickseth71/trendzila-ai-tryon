@@ -35,6 +35,29 @@ if (host === "localhost") {
   };
 }
 
+// React Router's router doesn't recognize OPTIONS as a valid method, so it
+// throws before any route file runs. This intercepts the CORS preflight for
+// our try-on endpoint and answers it directly, before the request reaches
+// React Router at all.
+function tryonCorsPreflight() {
+  return {
+    name: "tryon-cors-preflight",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method === "OPTIONS" && req.url?.startsWith("/api/tryon")) {
+          res.statusCode = 204;
+          res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+          res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+          res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+          res.end();
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   server: {
     allowedHosts: [host],
@@ -48,7 +71,7 @@ export default defineConfig({
       allow: ["app", "node_modules"],
     },
   },
-  plugins: [reactRouter(), tsconfigPaths()],
+  plugins: [tryonCorsPreflight(), reactRouter(), tsconfigPaths()],
   build: {
     assetsInlineLimit: 0,
   },
