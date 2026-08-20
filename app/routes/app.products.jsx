@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLoaderData, useNavigation, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
 
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
