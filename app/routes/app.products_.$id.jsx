@@ -307,8 +307,10 @@ export default function ProductDetail() {
     };
   }, [previews]);
 
-  function handleFileChange(fieldKey, event) {
-    const file = event.target.files?.[0];
+  // Which field is currently being dragged over, for the dropzone highlight.
+  const [dragOverField, setDragOverField] = useState(null);
+
+  function applyFile(fieldKey, file) {
     if (!file) return;
     setPreviews((current) => ({
       ...current,
@@ -316,6 +318,16 @@ export default function ProductDetail() {
     }));
     // A manual upload replaces any previously-imported file for this slot.
     setPickedFiles((current) => ({ ...current, [fieldKey]: null }));
+  }
+
+  function handleFileChange(fieldKey, event) {
+    applyFile(fieldKey, event.target.files?.[0]);
+  }
+
+  function handleDrop(fieldKey, event) {
+    event.preventDefault();
+    setDragOverField(null);
+    applyFile(fieldKey, event.dataTransfer.files?.[0]);
   }
 
   async function handleImport(fieldKey) {
@@ -428,8 +440,8 @@ export default function ProductDetail() {
                         border="base"
                         borderRadius="base"
                         overflow="hidden"
-                        inlineSize="160px"
-                        blockSize="160px"
+                        inlineSize="72px"
+                        blockSize="72px"
                       >
                         {previewUrl ? (
                           <s-image
@@ -450,10 +462,10 @@ export default function ProductDetail() {
                           aria-label={`View ${label} full size`}
                           style={{
                             position: "absolute",
-                            top: "6px",
-                            right: "6px",
-                            width: "28px",
-                            height: "28px",
+                            top: "4px",
+                            right: "4px",
+                            width: "22px",
+                            height: "22px",
                             borderRadius: "50%",
                             border: "none",
                             background: "rgba(0,0,0,0.55)",
@@ -466,8 +478,8 @@ export default function ProductDetail() {
                           }}
                         >
                           <svg
-                            width="16"
-                            height="16"
+                            width="12"
+                            height="12"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -482,12 +494,71 @@ export default function ProductDetail() {
 
                     <s-stack direction="block" gap="small-200">
                       <s-text>{label}</s-text>
-                      <input
-                        type="file"
-                        name={formField}
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(event) => handleFileChange(formField, event)}
-                      />
+                      <s-stack
+                        direction="inline"
+                        gap="small-300"
+                        alignItems="stretch"
+                      >
+                        <label
+                          htmlFor={`${formField}-file-input`}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            setDragOverField(formField);
+                          }}
+                          onDragLeave={() => setDragOverField(null)}
+                          onDrop={(event) => handleDrop(formField, event)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            cursor: "pointer",
+                            border: `1px dashed ${
+                              dragOverField === formField
+                                ? "#005bd3"
+                                : "#8a8a8a"
+                            }`,
+                            borderRadius: "8px",
+                            padding: "10px 14px",
+                            background:
+                              dragOverField === formField
+                                ? "#eaf2ff"
+                                : "transparent",
+                          }}
+                        >
+                          <svg
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 3v12" />
+                            <path d="M7 8l5-5 5 5" />
+                            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                          </svg>
+                          <s-text>Choose file or drag and drop</s-text>
+                          <input
+                            id={`${formField}-file-input`}
+                            type="file"
+                            name={formField}
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(event) =>
+                              handleFileChange(formField, event)
+                            }
+                            style={{ display: "none" }}
+                          />
+                        </label>
+
+                        <s-button
+                          type="button"
+                          variant="secondary"
+                          loading={importingField === formField}
+                          onClick={() => handleImport(formField)}
+                        >
+                          Import from Shopify
+                        </s-button>
+                      </s-stack>
                       {picked && (
                         <input
                           type="hidden"
@@ -495,14 +566,6 @@ export default function ProductDetail() {
                           value={picked.id}
                         />
                       )}
-                      <s-button
-                        type="button"
-                        variant="tertiary"
-                        loading={importingField === formField}
-                        onClick={() => handleImport(formField)}
-                      >
-                        Import from Shopify
-                      </s-button>
                     </s-stack>
                   </s-stack>
                 </s-box>
