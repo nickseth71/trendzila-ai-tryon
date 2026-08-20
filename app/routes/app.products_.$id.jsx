@@ -11,6 +11,9 @@ import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 
+// Media types the file picker should offer — reference photos are always images.
+const PICKER_DATA = { mediaTypes: ["MediaImage"] };
+
 const METAFIELD_NAMESPACE = "tryon";
 
 const IMAGE_FIELDS = [
@@ -42,15 +45,6 @@ export async function loader({ request, params }) {
         side: metafield(namespace: "tryon", key: "side_image") {
           reference { ... on MediaImage { image { url } } }
         }
-        media(first: 50) {
-          nodes {
-            id
-            alt
-            ... on MediaImage {
-              image { url }
-            }
-          }
-        }
       }
     }`,
     { variables: { id: productGid } },
@@ -62,10 +56,6 @@ export async function loader({ request, params }) {
     throw new Response("Product not found", { status: 404 });
   }
 
-  const productImages = (data.product.media?.nodes || [])
-    .filter((node) => node.image?.url)
-    .map((node) => ({ id: node.id, url: node.image.url, alt: node.alt || "" }));
-
   return {
     product: { id: data.product.id, title: data.product.title },
     existingImages: {
@@ -73,7 +63,6 @@ export async function loader({ request, params }) {
       back: data.product.back?.reference?.image?.url || null,
       side: data.product.side?.reference?.image?.url || null,
     },
-    productImages,
   };
 }
 
@@ -219,7 +208,7 @@ export async function action({ request, params }) {
       uploads.push({ field, file });
       continue;
     }
-    // Imported via the "Import from this product" picker — already a real
+    // Imported via the "Import from Shopify" picker — already a real
     // File/MediaImage on this store, so it just needs writing to the
     // metafield directly, no staged upload required.
     const pickedFileId = formData.get(`${field.formField}_file_id`);
@@ -285,8 +274,9 @@ export async function action({ request, params }) {
 }
 
 export default function ProductDetail() {
-  const { product, existingImages, productImages } = useLoaderData();
+  const { product, existingImages } = useLoaderData();
   const fetcher = useFetcher();
+  const previewFetcher = useFetcher();
   const navigation = useNavigation();
 
   const [previews, setPreviews] = useState({
@@ -295,21 +285,16 @@ export default function ProductDetail() {
     side: null,
   });
 
-  // Files picked from this product's own media, keyed by field:
-  // { id: "gid://shopify/MediaImage/...", url: "..." }
+  // Files picked from Shopify's existing library via the Intents API,
+  // keyed by field: { id: "gid://shopify/MediaImage/...", url: "..." }
   const [pickedFiles, setPickedFiles] = useState({
     front: null,
     back: null,
     side: null,
   });
 
-  // Which field's import modal is currently open.
-  const [importTarget, setImportTarget] = useState(null);
-  // The image currently shown in the "view full size" modal.
-  const [viewingImage, setViewingImage] = useState(null);
-
-  const importModalRef = useRef(null);
-  const viewModalRef = useRef(null);
+  const [importingField, setImportingField] = useState(null);
+  const pendingPreviewField = useRef(null);
 
   // Revoke object URLs on unmount so they don't leak.
   useEffect(() => {
@@ -329,38 +314,57 @@ export default function ProductDetail() {
     setPickedFiles((current) => ({ ...current, [fieldKey]: null }));
   }
 
-  function openImportModal(fieldKey) {
-    setImportTarget(fieldKey);
-    importModalRef.current?.showOverlay?.();
+  async function handleImport(fieldKey) {
+    if (typeof window === "undefined" || !window.shopify?.intents) return;
+    setImportingField(fieldKey);
+    try {
+      const activity = await window.shopify.intents.invoke(
+        "pick:shopify/File",
+        {
+          data: PICKER_DATA,
+        },
+      );
+      const response = await activity.complete;
+      if (response.code !== "ok") return;
+
+      const fileId = response.data?.ids?.[0];
+      if (!fileId) return;
+
+      // A picked file replaces any pending manual upload for this slot.
+      setPreviews((current) => {
+        if (current[fieldKey]) URL.revokeObjectURL(current[fieldKey]);
+        return { ...current, [fieldKey]: null };
+      });
+      setPickedFiles((current) => ({
+        ...current,
+        [fieldKey]: { id: fileId, url: null },
+      }));
+
+      // Stash which field this lookup is for so the response can be routed
+      // back to the right slot once it resolves.
+      pendingPreviewField.current = fieldKey;
+      previewFetcher.load(
+        `/app/api/file-preview?ids=${encodeURIComponent(fileId)}`,
+      );
+    } finally {
+      setImportingField(null);
+    }
   }
 
-  function closeImportModal() {
-    importModalRef.current?.hideOverlay?.();
-    setImportTarget(null);
-  }
-
-  function handlePickImage(image) {
-    if (!importTarget) return;
-    setPreviews((current) => {
-      if (current[importTarget]) URL.revokeObjectURL(current[importTarget]);
-      return { ...current, [importTarget]: null };
+  // Route the resolved preview URL back to whichever field triggered it.
+  useEffect(() => {
+    if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
+    const fieldKey = pendingPreviewField.current;
+    if (!fieldKey) return;
+    const image = previewFetcher.data.images || {};
+    setPickedFiles((current) => {
+      const entry = current[fieldKey];
+      if (!entry) return current;
+      const url = image[entry.id];
+      if (!url || entry.url === url) return current;
+      return { ...current, [fieldKey]: { ...entry, url } };
     });
-    setPickedFiles((current) => ({
-      ...current,
-      [importTarget]: { id: image.id, url: image.url },
-    }));
-    closeImportModal();
-  }
-
-  function openViewModal(url, label) {
-    setViewingImage({ url, label });
-    viewModalRef.current?.showOverlay?.();
-  }
-
-  function closeViewModal() {
-    viewModalRef.current?.hideOverlay?.();
-    setViewingImage(null);
-  }
+  }, [previewFetcher.state, previewFetcher.data]);
 
   const isSaving = fetcher.state !== "idle";
   const result = fetcher.data;
@@ -392,101 +396,56 @@ export default function ProductDetail() {
         )}
 
         <fetcher.Form method="post" encType="multipart/form-data">
-          <s-stack direction="block" gap="base">
+          <s-grid gap="base" gridTemplateColumns="repeat(3, minmax(0, 1fr))">
             {IMAGE_FIELDS.map(({ formField, label }) => {
               const picked = pickedFiles[formField];
               const previewUrl =
                 previews[formField] || picked?.url || existingImages[formField];
-
               return (
-                <s-box
-                  key={formField}
-                  border="base"
-                  borderRadius="base"
-                  padding="base"
-                >
-                  <s-stack direction="inline" gap="base" alignItems="start">
-                    <div style={{ position: "relative", flexShrink: 0 }}>
-                      <s-box
-                        border="base"
-                        borderRadius="base"
-                        overflow="hidden"
-                        inlineSize="160px"
-                        blockSize="160px"
-                      >
-                        {previewUrl ? (
-                          <s-image
-                            objectFit="cover"
-                            alt={`${label} preview`}
-                            src={previewUrl}
-                          />
-                        ) : null}
-                      </s-box>
-                      {previewUrl && (
-                        <button
-                          type="button"
-                          onClick={() => openViewModal(previewUrl, label)}
-                          aria-label={`View ${label} full size`}
-                          style={{
-                            position: "absolute",
-                            top: "6px",
-                            right: "6px",
-                            width: "28px",
-                            height: "28px",
-                            borderRadius: "50%",
-                            border: "none",
-                            background: "rgba(0,0,0,0.55)",
-                            color: "#fff",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            cursor: "pointer",
-                            padding: 0,
-                          }}
-                        >
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
-                            <circle cx="12" cy="12" r="3" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-
-                    <s-stack direction="block" gap="small-200">
-                      <s-text>{label}</s-text>
-                      <input
-                        type="file"
-                        name={formField}
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(event) => handleFileChange(formField, event)}
+                <s-stack key={formField} gap="small-200">
+                  <s-text>{label}</s-text>
+                  <s-box
+                    border="base"
+                    borderRadius="base"
+                    overflow="hidden"
+                    inlineSize="160px"
+                    blockSize="160px"
+                  >
+                    {previewUrl ? (
+                      <s-image
+                        objectFit="cover"
+                        alt={`${label} preview`}
+                        src={previewUrl}
                       />
-                      {picked && (
-                        <input
-                          type="hidden"
-                          name={`${formField}_file_id`}
-                          value={picked.id}
-                        />
-                      )}
-                      <s-button
-                        type="button"
-                        variant="tertiary"
-                        onClick={() => openImportModal(formField)}
-                      >
-                        Import from this product
-                      </s-button>
-                    </s-stack>
-                  </s-stack>
-                </s-box>
+                    ) : picked ? (
+                      <s-spinner accessibilityLabel="Loading preview" />
+                    ) : null}
+                  </s-box>
+                  <input
+                    type="file"
+                    name={formField}
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => handleFileChange(formField, event)}
+                  />
+                  {picked && (
+                    <input
+                      type="hidden"
+                      name={`${formField}_file_id`}
+                      value={picked.id}
+                    />
+                  )}
+                  <s-button
+                    type="button"
+                    variant="tertiary"
+                    loading={importingField === formField}
+                    onClick={() => handleImport(formField)}
+                  >
+                    Import from Shopify
+                  </s-button>
+                </s-stack>
               );
             })}
-          </s-stack>
+          </s-grid>
 
           <s-box paddingBlockStart="base">
             <s-button variant="primary" type="submit" loading={isSaving}>
@@ -495,64 +454,6 @@ export default function ProductDetail() {
           </s-box>
         </fetcher.Form>
       </s-section>
-
-      <s-modal ref={importModalRef} heading="Choose an image from this product">
-        {productImages.length === 0 ? (
-          <s-paragraph>
-            This product doesn't have any images uploaded yet. Add images to the
-            product first, or upload a reference photo directly.
-          </s-paragraph>
-        ) : (
-          <s-grid
-            gap="small-200"
-            gridTemplateColumns="repeat(4, minmax(0, 1fr))"
-          >
-            {productImages.map((image) => (
-              <s-clickable
-                key={image.id}
-                onClick={() => handlePickImage(image)}
-                accessibilityLabel={`Use ${image.alt || "this image"}`}
-                border="base"
-                borderRadius="base"
-                overflow="hidden"
-                aspectRatio="1"
-              >
-                <s-image
-                  objectFit="cover"
-                  alt={image.alt || "Product image"}
-                  src={image.url}
-                />
-              </s-clickable>
-            ))}
-          </s-grid>
-        )}
-        <s-button
-          slot="secondary-actions"
-          type="button"
-          onClick={closeImportModal}
-        >
-          Cancel
-        </s-button>
-      </s-modal>
-
-      <s-modal ref={viewModalRef} heading={viewingImage?.label || "Preview"}>
-        {viewingImage && (
-          <s-box inlineSize="100%" blockSize="480px">
-            <s-image
-              objectFit="contain"
-              alt={`${viewingImage.label} full size`}
-              src={viewingImage.url}
-            />
-          </s-box>
-        )}
-        <s-button
-          slot="secondary-actions"
-          type="button"
-          onClick={closeViewModal}
-        >
-          Close
-        </s-button>
-      </s-modal>
     </s-page>
   );
 }
