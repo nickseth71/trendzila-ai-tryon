@@ -16,6 +16,8 @@
     data-shop="{{ shop.permanent_domain }}"
     data-tryon-endpoint="https://trendzila-ai-tryon.onrender.com/api/tryon"
     data-sample-photo-url="{{ block.settings.sample_photo_url | default: 'https://storage.googleapis.com/falserverless/example_inputs/model.png' }}"
+    data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+    data-available="{{ product.selected_or_first_available_variant.available }}"
   >
     <button type="button" class="tryon-cta" data-tryon-open>
       <span aria-hidden="true">✦</span>

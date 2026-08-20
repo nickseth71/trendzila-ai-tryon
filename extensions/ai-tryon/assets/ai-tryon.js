@@ -12,6 +12,8 @@
     const shop = root.dataset.shop;
     const endpoint = root.dataset.tryonEndpoint;
     const samplePhotoUrl = root.dataset.samplePhotoUrl;
+    const variantId = root.dataset.variantId;
+    const initialAvailable = root.dataset.available === "true";
 
     const els = {
       cta: root.querySelector("[data-tryon-open]"),
@@ -47,7 +49,22 @@
       resultImages: {},
       angleStatus: {},
       activeAngle: "front",
+      variantId: variantId || null,
+      available: variantId ? initialAvailable : false,
+      addingToCart: false,
     };
+
+    // Many themes broadcast variant changes (e.g. when the shopper switches
+    // size/color) as a "variant:change" CustomEvent with the new variant on
+    // detail.variant. If this theme does, keep the widget's Add to Cart
+    // button in sync instead of relying only on the page-load value.
+    document.addEventListener("variant:change", (event) => {
+      const variant = event.detail && event.detail.variant;
+      if (!variant || String(variant.product_id) !== String(productId)) return;
+      state.variantId = variant.id;
+      state.available = !!variant.available;
+      if (state.step === "result") updatePrimaryState();
+    });
 
     els.cta.addEventListener("click", openSheet);
     els.overlay.addEventListener("click", closeSheet);
@@ -67,6 +84,7 @@
       els.overlay.hidden = false;
       els.sheet.classList.add("open");
       els.sheet.setAttribute("aria-hidden", "false");
+      lockBodyScroll();
       render();
     }
 
@@ -74,6 +92,25 @@
       els.overlay.hidden = true;
       els.sheet.classList.remove("open");
       els.sheet.setAttribute("aria-hidden", "true");
+      unlockBodyScroll();
+    }
+
+    let bodyScrollLockCount = 0;
+    let savedBodyOverflow = "";
+
+    function lockBodyScroll() {
+      if (bodyScrollLockCount === 0) {
+        savedBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+      }
+      bodyScrollLockCount += 1;
+    }
+
+    function unlockBodyScroll() {
+      bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+      if (bodyScrollLockCount === 0) {
+        document.body.style.overflow = savedBodyOverflow;
+      }
     }
 
     function showError(message) {
@@ -191,6 +228,7 @@
 
       state.step = "processing";
       showError("");
+      showResultError("");
       state.activeAngle = "front";
       state.resultImages = {};
       state.angleStatus = { front: "loading", side: "queued", back: "queued" };
@@ -217,8 +255,8 @@
     }
 
     function showResultError(message) {
-      els.demoNote.hidden = false;
-      els.demoNote.textContent = message;
+      els.demoNote.hidden = !message;
+      els.demoNote.textContent = message || "";
     }
 
     function handlePrimary() {
@@ -232,13 +270,56 @@
         return;
       }
       if (state.step === "result") {
+        addCurrentProductToCart();
+      }
+    }
+
+    async function addCurrentProductToCart() {
+      if (!state.available || !state.variantId || state.addingToCart) return;
+
+      state.addingToCart = true;
+      showResultError("");
+      updatePrimaryState();
+
+      try {
+        const response = await fetch("/cart/add.js", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            items: [{ id: state.variantId, quantity: 1 }],
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            (payload && payload.description) ||
+              "Could not add this item to your cart.",
+          );
+        }
+
+        // Let the theme's own cart drawer/count refresh itself if it's
+        // listening for this; if nothing is, the reload below still
+        // leaves the cart correctly updated.
+        root.dispatchEvent(
+          new CustomEvent("tryon:add-to-cart", {
+            bubbles: true,
+            detail: { productId, productTitle, variantId: state.variantId },
+          }),
+        );
+
         closeSheet();
-        window.setTimeout(() => {
-          const event = new CustomEvent("tryon:add-to-cart", {
-            detail: { productId, productTitle },
-          });
-          root.dispatchEvent(event);
-        }, 250);
+        window.setTimeout(() => window.location.reload(), 200);
+      } catch (err) {
+        state.addingToCart = false;
+        updatePrimaryState();
+        showResultError(
+          err.message ||
+            "Could not add this item to your cart. Please try again.",
+        );
       }
     }
 
@@ -300,14 +381,25 @@
     }
 
     function updatePrimaryState() {
+      const outOfStock = state.step === "result" && !state.available;
+
       els.primary.disabled =
         state.step === "processing" ||
-        (state.step === "upload" && !state.uploadData);
+        (state.step === "upload" && !state.uploadData) ||
+        outOfStock ||
+        state.addingToCart;
+
+      els.primary.classList.toggle("tryon-primary--out-of-stock", outOfStock);
+
       const labels = {
         intro: "Start Try On",
         upload: state.uploadData ? "Generate Look" : "Upload Photo",
         processing: "Generating...",
-        result: "Add to Cart",
+        result: outOfStock
+          ? "Out of Stock"
+          : state.addingToCart
+            ? "Adding..."
+            : "Add to Cart",
       };
       els.primary.textContent = labels[state.step] || "Try Again";
     }

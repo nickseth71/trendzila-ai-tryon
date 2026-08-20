@@ -73,9 +73,16 @@
   position: absolute;
   top: 10px;
   right: 14px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
-  font-size: 22px;
+  color: #000;
+  font-size: 30px;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
 }
@@ -360,4 +367,9 @@
 .tryon-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.tryon-primary--out-of-stock {
+  background: var(--tryon-muted);
+  opacity: 1;
 }
