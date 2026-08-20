@@ -503,47 +503,28 @@ export default function ProductDetail() {
             product first, or upload a reference photo directly.
           </s-paragraph>
         ) : (
-          <s-stack direction="block" gap="small-200">
+          <s-grid
+            gap="small-200"
+            gridTemplateColumns="repeat(4, minmax(0, 1fr))"
+          >
             {productImages.map((image) => (
-              <s-box
+              <s-clickable
                 key={image.id}
+                onClick={() => handlePickImage(image)}
+                accessibilityLabel={`Use ${image.alt || "this image"}`}
                 border="base"
                 borderRadius="base"
-                padding="small-200"
+                overflow="hidden"
+                aspectRatio="1"
               >
-                <s-stack
-                  direction="inline"
-                  gap="base"
-                  alignItems="center"
-                  justifyContent="space-between"
-                >
-                  <s-stack direction="inline" gap="base" alignItems="center">
-                    <s-box
-                      border="base"
-                      borderRadius="base"
-                      overflow="hidden"
-                      inlineSize="64px"
-                      blockSize="64px"
-                    >
-                      <s-image
-                        objectFit="cover"
-                        alt={image.alt || "Product image"}
-                        src={image.url}
-                      />
-                    </s-box>
-                    <s-text>{image.alt || "Untitled image"}</s-text>
-                  </s-stack>
-                  <s-button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => handlePickImage(image)}
-                  >
-                    Use this image
-                  </s-button>
-                </s-stack>
-              </s-box>
+                <s-image
+                  objectFit="cover"
+                  alt={image.alt || "Product image"}
+                  src={image.url}
+                />
+              </s-clickable>
             ))}
-          </s-stack>
+          </s-grid>
         )}
         <s-button
           slot="secondary-actions"
