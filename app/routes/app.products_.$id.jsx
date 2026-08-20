@@ -373,11 +373,9 @@ export default function ProductDetail() {
 
   function openViewModal(url, label) {
     setViewingImage({ url, label });
-    viewModalRef.current?.showOverlay?.();
   }
 
   function closeViewModal() {
-    viewModalRef.current?.hideOverlay?.();
     setViewingImage(null);
   }
 
@@ -446,6 +444,8 @@ export default function ProductDetail() {
                       {previewUrl && (
                         <button
                           type="button"
+                          command="--show"
+                          commandFor="view-image-modal"
                           onClick={() => openViewModal(previewUrl, label)}
                           aria-label={`View ${label} full size`}
                           style={{
@@ -518,7 +518,11 @@ export default function ProductDetail() {
         </fetcher.Form>
       </s-section>
 
-      <s-modal ref={viewModalRef} heading={viewingImage?.label || "Preview"}>
+      <s-modal
+        id="view-image-modal"
+        ref={viewModalRef}
+        heading={viewingImage?.label || "Preview"}
+      >
         {viewingImage && (
           <s-box inlineSize="100%" blockSize="480px">
             <s-image
@@ -531,6 +535,8 @@ export default function ProductDetail() {
         <s-button
           slot="secondary-actions"
           type="button"
+          command="--hide"
+          commandFor="view-image-modal"
           onClick={closeViewModal}
         >
           Close
