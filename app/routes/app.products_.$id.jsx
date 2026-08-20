@@ -219,7 +219,7 @@ export async function action({ request, params }) {
       uploads.push({ field, file });
       continue;
     }
-    // Imported via the "Import from Shopify" picker — already a real
+    // Imported via the "Import from this product" picker — already a real
     // File/MediaImage on this store, so it just needs writing to the
     // metafield directly, no staged upload required.
     const pickedFileId = formData.get(`${field.formField}_file_id`);
