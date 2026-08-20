@@ -327,6 +327,10 @@
   font-size: 12px;
 }
 
+.tryon-angle-loading[hidden] {
+  display: none;
+}
+
 .tryon-mini-spinner {
   width: 24px;
   height: 24px;
