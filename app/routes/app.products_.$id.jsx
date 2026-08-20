@@ -7,9 +7,12 @@
 // are created automatically the first time this runs, so there's no
 // separate setup step for the merchant or developer.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
+
+// Media types the file picker should offer — reference photos are always images.
+const PICKER_DATA = { mediaTypes: ["MediaImage"] };
 
 const METAFIELD_NAMESPACE = "tryon";
 
@@ -198,14 +201,23 @@ export async function action({ request, params }) {
   const formData = await request.formData();
 
   const uploads = [];
+  const picked = [];
   for (const field of IMAGE_FIELDS) {
     const file = formData.get(field.formField);
     if (file && typeof file === "object" && "size" in file && file.size > 0) {
       uploads.push({ field, file });
+      continue;
+    }
+    // Imported via the "Import from Shopify" picker — already a real
+    // File/MediaImage on this store, so it just needs writing to the
+    // metafield directly, no staged upload required.
+    const pickedFileId = formData.get(`${field.formField}_file_id`);
+    if (pickedFileId) {
+      picked.push({ field, fileGid: String(pickedFileId) });
     }
   }
 
-  if (uploads.length === 0) {
+  if (uploads.length === 0 && picked.length === 0) {
     return { error: "Choose at least one image before saving." };
   }
 
@@ -215,6 +227,15 @@ export async function action({ request, params }) {
     const metafieldsInput = [];
     for (const { field, file } of uploads) {
       const fileGid = await uploadImageFile(admin, file);
+      metafieldsInput.push({
+        ownerId: productGid,
+        namespace: METAFIELD_NAMESPACE,
+        key: field.key,
+        type: "file_reference",
+        value: fileGid,
+      });
+    }
+    for (const { field, fileGid } of picked) {
       metafieldsInput.push({
         ownerId: productGid,
         namespace: METAFIELD_NAMESPACE,
@@ -243,7 +264,7 @@ export async function action({ request, params }) {
 
     return {
       success: true,
-      savedFields: uploads.map((u) => u.field.formField),
+      savedFields: [...uploads, ...picked].map((u) => u.field.formField),
     };
   } catch (error) {
     return {
@@ -255,6 +276,7 @@ export async function action({ request, params }) {
 export default function ProductDetail() {
   const { product, existingImages } = useLoaderData();
   const fetcher = useFetcher();
+  const previewFetcher = useFetcher();
   const navigation = useNavigation();
 
   const [previews, setPreviews] = useState({
@@ -262,6 +284,17 @@ export default function ProductDetail() {
     back: null,
     side: null,
   });
+
+  // Files picked from Shopify's existing library via the Intents API,
+  // keyed by field: { id: "gid://shopify/MediaImage/...", url: "..." }
+  const [pickedFiles, setPickedFiles] = useState({
+    front: null,
+    back: null,
+    side: null,
+  });
+
+  const [importingField, setImportingField] = useState(null);
+  const pendingPreviewField = useRef(null);
 
   // Revoke object URLs on unmount so they don't leak.
   useEffect(() => {
@@ -277,7 +310,61 @@ export default function ProductDetail() {
       ...current,
       [fieldKey]: URL.createObjectURL(file),
     }));
+    // A manual upload replaces any previously-imported file for this slot.
+    setPickedFiles((current) => ({ ...current, [fieldKey]: null }));
   }
+
+  async function handleImport(fieldKey) {
+    if (typeof window === "undefined" || !window.shopify?.intents) return;
+    setImportingField(fieldKey);
+    try {
+      const activity = await window.shopify.intents.invoke(
+        "pick:shopify/File",
+        {
+          data: PICKER_DATA,
+        },
+      );
+      const response = await activity.complete;
+      if (response.code !== "ok") return;
+
+      const fileId = response.data?.ids?.[0];
+      if (!fileId) return;
+
+      // A picked file replaces any pending manual upload for this slot.
+      setPreviews((current) => {
+        if (current[fieldKey]) URL.revokeObjectURL(current[fieldKey]);
+        return { ...current, [fieldKey]: null };
+      });
+      setPickedFiles((current) => ({
+        ...current,
+        [fieldKey]: { id: fileId, url: null },
+      }));
+
+      // Stash which field this lookup is for so the response can be routed
+      // back to the right slot once it resolves.
+      pendingPreviewField.current = fieldKey;
+      previewFetcher.load(
+        `/app/api/file-preview?ids=${encodeURIComponent(fileId)}`,
+      );
+    } finally {
+      setImportingField(null);
+    }
+  }
+
+  // Route the resolved preview URL back to whichever field triggered it.
+  useEffect(() => {
+    if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
+    const fieldKey = pendingPreviewField.current;
+    if (!fieldKey) return;
+    const image = previewFetcher.data.images || {};
+    setPickedFiles((current) => {
+      const entry = current[fieldKey];
+      if (!entry) return current;
+      const url = image[entry.id];
+      if (!url || entry.url === url) return current;
+      return { ...current, [fieldKey]: { ...entry, url } };
+    });
+  }, [previewFetcher.state, previewFetcher.data]);
 
   const isSaving = fetcher.state !== "idle";
   const result = fetcher.data;
@@ -311,8 +398,9 @@ export default function ProductDetail() {
         <fetcher.Form method="post" encType="multipart/form-data">
           <s-grid gap="base" gridTemplateColumns="repeat(3, minmax(0, 1fr))">
             {IMAGE_FIELDS.map(({ formField, label }) => {
+              const picked = pickedFiles[formField];
               const previewUrl =
-                previews[formField] || existingImages[formField];
+                previews[formField] || picked?.url || existingImages[formField];
               return (
                 <s-stack key={formField} gap="small-200">
                   <s-text>{label}</s-text>
@@ -329,6 +417,8 @@ export default function ProductDetail() {
                         alt={`${label} preview`}
                         src={previewUrl}
                       />
+                    ) : picked ? (
+                      <s-spinner accessibilityLabel="Loading preview" />
                     ) : null}
                   </s-box>
                   <input
@@ -337,6 +427,21 @@ export default function ProductDetail() {
                     accept="image/png,image/jpeg,image/webp"
                     onChange={(event) => handleFileChange(formField, event)}
                   />
+                  {picked && (
+                    <input
+                      type="hidden"
+                      name={`${formField}_file_id`}
+                      value={picked.id}
+                    />
+                  )}
+                  <s-button
+                    type="button"
+                    variant="tertiary"
+                    loading={importingField === formField}
+                    onClick={() => handleImport(formField)}
+                  >
+                    Import from Shopify
+                  </s-button>
                 </s-stack>
               );
             })}
