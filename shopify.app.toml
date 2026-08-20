@@ -2,7 +2,7 @@
 
 client_id = "49a56e157cc64a42ecd1d5cddcf455a6"
 name = "Trendzila Try-ons"
-application_url = "https://example.com"
+application_url = "https://trendzila-ai-tryon.onrender.com"
 embedded = true
 
 [build]
@@ -17,4 +17,4 @@ api_version = "2026-10"
 scopes = "read_products,write_products,write_files"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://trendzila-ai-tryon.onrender.com/api/auth" ]
