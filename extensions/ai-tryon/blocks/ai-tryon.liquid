@@ -18,6 +18,7 @@
     data-sample-photo-url="{{ block.settings.sample_photo_url | default: 'https://storage.googleapis.com/falserverless/example_inputs/model.png' }}"
     data-variant-id="{{ product.selected_or_first_available_variant.id }}"
     data-available="{{ product.selected_or_first_available_variant.available }}"
+    data-product-handle="{{ product.handle }}"
   >
     <button type="button" class="tryon-cta" data-tryon-open>
       <span aria-hidden="true">✦</span>
@@ -86,6 +87,13 @@
           <button type="button" data-angle="back">Back</button>
         </div>
         <div class="tryon-result-image" data-tryon-result-image>
+          <button type="button" class="tryon-download" data-tryon-download hidden aria-label="Download this image">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 3v12" />
+              <path d="M7 10l5 5 5-5" />
+              <path d="M4 19h16" />
+            </svg>
+          </button>
           <div class="tryon-angle-loading" data-tryon-angle-loading>
             <div class="tryon-mini-spinner"></div>
             <strong data-tryon-angle-loading-label>Front view is generating</strong>

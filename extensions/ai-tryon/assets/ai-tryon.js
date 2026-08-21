@@ -14,6 +14,7 @@
     const samplePhotoUrl = root.dataset.samplePhotoUrl;
     const variantId = root.dataset.variantId;
     const initialAvailable = root.dataset.available === "true";
+    const productHandle = root.dataset.productHandle;
 
     const els = {
       cta: root.querySelector("[data-tryon-open]"),
@@ -39,6 +40,7 @@
       resultImg: root.querySelector("[data-tryon-result-img]"),
       angleLoading: root.querySelector("[data-tryon-angle-loading]"),
       angleLoadingLabel: root.querySelector("[data-tryon-angle-loading-label]"),
+      download: root.querySelector("[data-tryon-download]"),
       shareBtn: root.querySelector("[data-tryon-share]"),
     };
 
@@ -54,17 +56,64 @@
       addingToCart: false,
     };
 
-    // Many themes broadcast variant changes (e.g. when the shopper switches
-    // size/color) as a "variant:change" CustomEvent with the new variant on
-    // detail.variant. If this theme does, keep the widget's Add to Cart
-    // button in sync instead of relying only on the page-load value.
-    document.addEventListener("variant:change", (event) => {
-      const variant = event.detail && event.detail.variant;
-      if (!variant || String(variant.product_id) !== String(productId)) return;
-      state.variantId = variant.id;
-      state.available = !!variant.available;
-      if (state.step === "result") updatePrimaryState();
-    });
+    // Availability lookup for every variant, keyed by variant id. Loaded
+    // once in the background; used so we can tell whether whatever variant
+    // the shopper currently has selected is actually in stock.
+    let variantsById = null;
+    if (productHandle) {
+      fetch(`/products/${productHandle}.js`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data || !Array.isArray(data.variants)) return;
+          variantsById = {};
+          data.variants.forEach((v) => {
+            variantsById[String(v.id)] = v;
+          });
+          if (state.step === "result") {
+            syncSelectedVariant();
+            updatePrimaryState();
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Reads the variant the shopper currently has selected directly from
+    // the page's own add-to-cart form — the same source of truth the theme
+    // itself uses — rather than relying on the value at page load or on a
+    // theme-specific "variant changed" event that may never fire.
+    function getSelectedVariantIdFromPage() {
+      const field = document.querySelector(
+        'form[action*="/cart/add"] [name="id"]',
+      );
+      return field && field.value ? String(field.value) : null;
+    }
+
+    // Refreshes state.variantId/state.available from whatever is currently
+    // selected on the page. Call this right before anything that depends
+    // on knowing the exact variant (opening the sheet, showing the Add to
+    // Cart button, actually adding to cart).
+    function syncSelectedVariant() {
+      const id = getSelectedVariantIdFromPage() || state.variantId;
+      if (!id) {
+        state.variantId = null;
+        state.available = false;
+        return;
+      }
+      state.variantId = id;
+      if (variantsById && variantsById[id]) {
+        state.available = !!variantsById[id].available;
+      } else if (id === variantId) {
+        // Haven't loaded the variants map yet (or it failed) — fall back
+        // to the value rendered at page load for the original variant.
+        state.available = initialAvailable;
+      } else {
+        // A different variant than the one rendered server-side, and we
+        // don't have fresh availability data for it yet — assume it's
+        // orderable; /cart/add.js is the final authority and will reject
+        // it with a clear error if it's actually out of stock.
+        state.available = true;
+      }
+    }
 
     els.cta.addEventListener("click", openSheet);
     els.overlay.addEventListener("click", closeSheet);
@@ -74,6 +123,7 @@
     els.sampleBtn.addEventListener("click", useSamplePhoto);
     els.primary.addEventListener("click", handlePrimary);
     els.shareBtn.addEventListener("click", handleShare);
+    els.download.addEventListener("click", handleDownload);
     els.angleTabs.querySelectorAll("[data-angle]").forEach((btn) => {
       btn.addEventListener("click", () => setActiveAngle(btn.dataset.angle));
     });
@@ -81,6 +131,7 @@
     function openSheet() {
       state.step = "intro";
       showError("");
+      syncSelectedVariant();
       els.overlay.hidden = false;
       els.sheet.classList.add("open");
       els.sheet.setAttribute("aria-hidden", "false");
@@ -275,6 +326,7 @@
     }
 
     async function addCurrentProductToCart() {
+      syncSelectedVariant();
       if (!state.available || !state.variantId || state.addingToCart) return;
 
       state.addingToCart = true;
@@ -321,6 +373,21 @@
             "Could not add this item to your cart. Please try again.",
         );
       }
+    }
+
+    function handleDownload() {
+      const imageUrl = state.resultImages[state.activeAngle];
+      if (!imageUrl) return;
+      const safeTitle = (productTitle || "try-on")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)/g, "");
+      const link = document.createElement("a");
+      link.href = imageUrl;
+      link.download = `${safeTitle}-${state.activeAngle}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     async function handleShare() {
@@ -373,14 +440,17 @@
         els.resultImg.src = imageUrl;
         els.resultImg.hidden = false;
         els.angleLoading.hidden = true;
+        els.download.hidden = false;
       } else {
         els.resultImg.hidden = true;
         els.angleLoading.hidden = false;
+        els.download.hidden = true;
         els.angleLoadingLabel.textContent = `${ANGLE_LABELS[state.activeAngle]} view is generating`;
       }
     }
 
     function updatePrimaryState() {
+      if (state.step === "result") syncSelectedVariant();
       const outOfStock = state.step === "result" && !state.available;
 
       els.primary.disabled =

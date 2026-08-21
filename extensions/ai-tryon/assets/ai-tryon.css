@@ -338,6 +338,28 @@
   display: none;
 }
 
+.tryon-download {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tryon-download[hidden] {
+  display: none;
+}
+
 .tryon-mini-spinner {
   width: 24px;
   height: 24px;
